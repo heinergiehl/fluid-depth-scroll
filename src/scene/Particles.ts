@@ -26,6 +26,7 @@ const stepShader = /* glsl */ `
   uniform float uTanHalf;
   uniform float uAspect;
   uniform float uFluidGain;
+  uniform float uPull; // 0..1: a vortex around the view axis sucks particles in (project transition)
   ${noiseGLSL}
 
   // Hashes take the texel coordinate (integers): hashing the continuous seed correlates
@@ -77,7 +78,15 @@ const stepShader = /* glsl */ `
 
     vec3 swirl = curl(pos * 0.18 + vec3(0.0, 0.0, uTime * 0.04)) * 0.18;
     vec3 target = swirl + vec3(0.0, 0.0, uDrift * mix(0.6, 1.4, fract(seed * 3.7)));
-    vec3 vel = mix(V.xyz, target, 1.0 - exp(-uDt * 1.5));
+    // Vortex pull: swirl around the view axis and towards it, faster the closer they are.
+    if (uPull > 0.0) {
+      vec2 r = pos.xy;
+      float d = length(r) + 0.3;
+      vec2 tangent = vec2(-r.y, r.x) / d;
+      target.xy += (tangent * 6.0 - r / d * 3.5) * uPull;
+      target.z += 4.0 * uPull;
+    }
+    vec3 vel = mix(V.xyz, target, 1.0 - exp(-uDt * (1.5 + 3.0 * uPull)));
     pos += vel * uDt;
 
     // The liquid carries them: fluid velocity (uv/s) at the projected position -> world units.
@@ -122,6 +131,8 @@ const renderVertex = /* glsl */ `
   uniform vec3 uWhite;
   uniform vec3 uCyan;
   uniform vec3 uViolet;
+  uniform vec3 uTint;
+  uniform float uTintMix;
   out vec3 vColor;
   out float vCore;
   ${noiseGLSL}
@@ -152,6 +163,7 @@ const renderVertex = /* glsl */ `
 
     float pick = r5;
     vec3 col = pick < 0.5 ? uWhite : pick < 0.78 ? uCyan : uViolet;
+    col = mix(col, uTint * (0.8 + 0.6 * r6), uTintMix * step(0.35, pick));
     vColor = col * fade * depthFade * twinkle * bright * sub * sub * uOpacity;
     vCore = mix(18.0, 30.0, big);
   }
@@ -196,7 +208,8 @@ export class Particles {
     uViewProj: { value: new THREE.Matrix4() },
     uTanHalf: { value: 0.3 },
     uAspect: { value: 1 },
-    uFluidGain: { value: 0.8 },
+    uFluidGain: { value: 0.6 },
+    uPull: { value: 0 },
   }
   private readonly stepMat: THREE.RawShaderMaterial
 
@@ -210,6 +223,8 @@ export class Particles {
     uWhite: { value: linear(PALETTE.white).multiplyScalar(1.4) },
     uCyan: { value: linear(PALETTE.cyan).multiplyScalar(1.2) },
     uViolet: { value: linear(PALETTE.lavender) },
+    uTint: { value: linear(PALETTE.cyan) },
+    uTintMix: { value: 0 },
   }
 
   constructor(renderer: THREE.WebGLRenderer, fluidVelocity: THREE.Texture, options: ParticleOptions = {}) {
@@ -268,6 +283,11 @@ export class Particles {
 
   // camera: the scene camera (its matrices must be current). camDelta: world motion since the
   // last step. The Points object is moved onto the camera so state stays camera-relative.
+  // Vortex pull strength 0..1 (project transition).
+  set pull(value: number) {
+    this.stepU.uPull.value = value
+  }
+
   update(dt: number, time: number, camera: THREE.PerspectiveCamera, camDelta: THREE.Vector3, pixelHeight: number) {
     const u = this.stepU
     u.uDt.value = Math.min(dt, 1 / 20)

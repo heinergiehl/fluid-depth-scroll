@@ -21,7 +21,8 @@ page.on("pageerror", e => logs.push(`pageerror: ${e}`))
 
 await page.goto(url)
 await page.waitForFunction(() => window.__demo?.seek, null, { timeout: 30000 })
-await page.waitForLoadState("networkidle")
+await page.waitForLoadState("load")
+await page.waitForTimeout(1500) // textures, fonts and the text worker settle
 await page.evaluate(() => document.fonts.ready)
 
 // Particle state: life in 0..1, positions inside the camera-relative volume, no NaN, and the

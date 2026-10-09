@@ -16,6 +16,7 @@ const fragment = /* glsl */ `
   uniform float uAspect;
   uniform float uTime;
   uniform float uVortex;
+  uniform float uZoom; // radial zoom blur, 0..1 (the project transition's rush)
   uniform float uRefraction;
   uniform float uDyeGlow;
   uniform float uExposure;
@@ -50,9 +51,27 @@ const fragment = /* glsl */ `
     float ca = 0.0035 * dot(dir, dir) + 0.0025 * min(length(vel), 3.0);
     vec2 off = normalize(dir + 1e-5) * ca / aspect;
     vec3 col;
-    col.r = texture(uScene, uv + off).r;
-    col.g = texture(uScene, uv).g;
-    col.b = texture(uScene, uv - off).b;
+    if (uZoom > 0.001) {
+      // Rush: average samples towards the centre; streaks grow with the distance from it.
+      vec2 toC = (vec2(0.5) - uv) * uZoom * 0.22;
+      col = vec3(0.0);
+      float wsum = 0.0;
+      for (int i = 0; i < 12; i++) {
+        float k = float(i) / 11.0;
+        float w = 1.0 - k * 0.6;
+        vec2 suv = uv + toC * k;
+        col.r += texture(uScene, suv + off).r * w;
+        col.g += texture(uScene, suv).g * w;
+        col.b += texture(uScene, suv - off).b * w;
+        wsum += w;
+      }
+      col /= wsum;
+      col *= 1.0 + 0.6 * uZoom; // the streaks glow a little
+    } else {
+      col.r = texture(uScene, uv + off).r;
+      col.g = texture(uScene, uv).g;
+      col.b = texture(uScene, uv - off).b;
+    }
 
     // Dye glows faintly where the cursor stirred.
     vec3 dye = texture(uDye, uv).rgb;
@@ -80,8 +99,9 @@ export class Composite {
     uAspect: { value: 1 },
     uTime: { value: 0 },
     uVortex: { value: 0 },
-    uRefraction: { value: 0.018 },
-    uDyeGlow: { value: 0.25 },
+    uZoom: { value: 0 },
+    uRefraction: { value: 0.013 },
+    uDyeGlow: { value: 0.12 },
     uExposure: { value: 1.0 },
     uGrain: { value: 0.035 },
   }

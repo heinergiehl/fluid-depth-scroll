@@ -9,7 +9,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "three": "^0.186.1"
+    "@fontsource/instrument-serif": "^5.3.0",
+    "@fontsource/inter-tight": "^5.3.0",
+    "three": "^0.186.1",
+    "troika-three-text": "^0.52.5"
   },
   "devDependencies": {
     "@types/three": "^0.186.0",

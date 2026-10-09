@@ -2,10 +2,11 @@ import { clamp, damp } from "./math"
 
 // Virtual scroll + pointer. The page itself never scrolls: wheel, touch and keys move a target
 // position along a virtual track of TRACK_SCREENS viewport heights; the visible position follows
-// it with damping. Progress p = position / track length.
+// it on a critically damped spring, so every wheel notch eases in and out (position and velocity
+// stay continuous). Progress p = position / track length.
 
 const TRACK_SCREENS = 9
-const SCROLL_DAMPING = 5.5 // 1/s
+const SCROLL_STIFFNESS = 6.5 // spring angular frequency, rad/s: ~0.7 s to settle
 const TOUCH_GAIN = 1.6
 const TOUCH_FRICTION = 3.5 // 1/s, inertia decay after the finger lifts
 const LEAN_DAMPING = 2.5
@@ -17,6 +18,7 @@ export class Input {
   // Scroll, in px of the virtual track.
   private target = 0
   private current = 0
+  private speed = 0 // px/s of the spring
   private track = 1
   private touchY: number | null = null
   private touchVelocity = 0 // px/s, while flinging
@@ -24,6 +26,7 @@ export class Input {
 
   progress = 0
   velocity = 0 // progress per second, signed
+  scrollLocked = false // wheel / touch / keys do not move the track (inside a project)
 
   // Pointer. ndc: -1..1 with y up; uv: 0..1 with y up.
   readonly ndc = { x: 0, y: 0 }
@@ -62,11 +65,13 @@ export class Input {
     this.track = Math.max(1, (TRACK_SCREENS - 1) * window.innerHeight)
     // Keep the same progress across resizes.
     this.target = this.current = p * this.track
+    this.speed = 0
   }
 
   // Jump to a position immediately (dev hook, deep links).
   seek(p: number) {
     this.target = this.current = clamp(p) * this.track
+    this.speed = 0
     this.touchVelocity = 0
     this.progress = clamp(p)
     this.velocity = 0
@@ -74,6 +79,7 @@ export class Input {
 
   // Scroll by a fraction of the track (buttons such as "Explore projects").
   scrollTo(p: number) {
+    if (this.scrollLocked) return
     this.target = clamp(p) * this.track
   }
 
@@ -84,12 +90,20 @@ export class Input {
       if (Math.abs(this.touchVelocity) < 5) this.touchVelocity = 0
     }
 
-    const before = this.current
-    const rate = this.reducedMotion ? SCROLL_DAMPING * 2.5 : SCROLL_DAMPING
-    this.current = damp(this.current, this.target, rate, dt)
-    if (Math.abs(this.current - this.target) < 0.05) this.current = this.target
+    // Exact critically damped spring step (stable for any dt).
+    const w = this.reducedMotion ? SCROLL_STIFFNESS * 2 : SCROLL_STIFFNESS
+    const x0 = this.current - this.target
+    const k = this.speed + w * x0
+    const e = Math.exp(-w * dt)
+    this.current = this.target + (x0 + k * dt) * e
+    this.speed = (this.speed - w * k * dt) * e
+    if (Math.abs(this.current - this.target) < 0.05 && Math.abs(this.speed) < 0.5) {
+      this.current = this.target
+      this.speed = 0
+    }
+    this.current = clamp(this.current, 0, this.track)
     this.progress = this.current / this.track
-    this.velocity = dt > 0 ? (this.current - before) / this.track / dt : 0
+    this.velocity = this.speed / this.track
 
     const leanRate = this.reducedMotion ? 0 : LEAN_DAMPING
     const tx = this.pointerInside ? this.ndc.x : 0
@@ -112,6 +126,7 @@ export class Input {
   }
 
   private addScroll(px: number) {
+    if (this.scrollLocked) return
     this.target = clamp(this.target + px, 0, this.track)
   }
 
@@ -145,10 +160,10 @@ export class Input {
         this.addScroll(e.shiftKey ? -page : page)
         break
       case "Home":
-        this.target = 0
+        if (!this.scrollLocked) this.target = 0
         break
       case "End":
-        this.target = this.track
+        if (!this.scrollLocked) this.target = this.track
         break
       default:
         return

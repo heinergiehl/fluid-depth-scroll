@@ -134,7 +134,7 @@ apart.
 11. [x] Overlay polish (fonts: a sans like "Inter Tight" + a serif italic like "Instrument Serif"
         from Google Fonts), reduced motion, mobile (touch scroll, lower counts), a11y (real text,
         focusable buttons), performance pass (no per-frame allocations, adaptive DPR on slow frames)
-12. [ ] README (done), Vercel deploy (open)
+12. [x] README, Vercel deploy (https://fluid-depth-scroll.vercel.app, auto-deploys from main)
 
 ## Fluid integration notes (from FluidSim.ts)
 
@@ -186,3 +186,21 @@ Expose a dev hook `window.__demo = { seek(p) }` to jump to a timeline position d
   screen) and hash texel ids, not the continuous seed (that lined particles up in rows).
 - **Reduced motion:** faster scroll damping, no pointer lean, no scroll push, weaker vortex.
 - **Adaptive DPR:** steps the pixel ratio down by 0.25 (to 1) after two seconds of slow frames.
+
+## Phase 2 (2026-10-09): smoother motion, projects as pages, WebGL text
+
+- **Smoothness.** Scroll position follows the wheel on a critically damped spring (exact step);
+  the hero + dive camera is one monotone cubic (Fritsch-Carlson) instead of stitched easings that
+  stopped at every seam; the card dwell is 0.5x..1.5x speed; the path eases out into the finale.
+  `selfTest()` now also fails on camera stalls and speed jumps.
+- **Calmer liquid.** Pointer velocity and position are low-passed before splatting, gain 0.7,
+  max 2.5 uv/s, radius 0.055, curl 16; dye ~3x fainter and only on brisk strokes.
+- **Projects** (`src/content.ts`, from latest-portfolio/app/data/projects.ts): seven cards, Globe
+  Kit replaced by GIF-Creator because the portfolio hides Globe Kit for now. Each has
+  `/projects/<slug>`, pre-rendered with its own meta tags.
+- **Interaction.** Cards are ray-picked: hover lights an accent halo, a sheen and a ripple in the
+  liquid; a click plays `Transition.ts` (fly to the screen, burn away, vortex + zoom rush, accent
+  cosmos, panel re-forms, text sharpens in). Escape / back / "All projects" plays it backwards.
+- **WebGL text.** `TextScene` measures every `.gl` element (rect, font, size, line height, letter
+  spacing, the browser's own line breaks) and sets troika text there; then the HTML text is made
+  transparent. The text lives in the 3D scene, so the composite's refraction and vortex move it.

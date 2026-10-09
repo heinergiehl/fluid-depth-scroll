@@ -1,4 +1,4 @@
-import { bump, clamp, easeInOut, invLerp, lerp, smoothstep } from "./math"
+import { bump, clamp, easeInOut, invLerp, lerp, monotoneCubic, smoothstep } from "./math"
 
 // The whole page as pure functions of the scroll progress p (0..1) and the viewport aspect.
 // WebGL and the HTML overlay both read from the same TimelineState, so they never drift apart.
@@ -28,11 +28,11 @@ const FOCUS_DISTANCE = 4.8 // camera -> focused card on a 16:9 screen
 // path starts gently, like the dive ends.
 const S_START = -3
 const S_SLOPE = (6.35 - S_START) / (PHASES.cards[1] - PHASES.statement[0]) // last card + 0.35 at the end of the cards
-const DWELL = 0.8 // 0 = constant speed, <1 = slows down around each card
+const DWELL = 0.5 // 0 = constant speed, <1 = slows down around each card (speed 0.5x..1.5x)
 const CAMERA_START = 7.2
-const CAMERA_HERO_END = 6.4
+const CAMERA_HERO_END = 5.6
 const CAMERA_FILL = 2.05 // the sphere covers a 16:9 screen from here (silhouette ~1.1 heights)
-const CAMERA_DIVE_END = 1.7
+const CAMERA_DIVE_END = 1.6
 const FINALE_DISTANCE = 6
 
 export interface Vec3 {
@@ -96,6 +96,13 @@ const local = (p: number, range: readonly [number, number]) => invLerp(range[0],
 const dwell = (x: number) => x - (DWELL * Math.sin(2 * Math.PI * x)) / (2 * Math.PI)
 
 const S_PATH_START = dwell(S_START) // where the path leaves the dive position
+// dz/dp of the path where it starts (dwell slope at an integer is 1 - DWELL).
+const PATH_START_SPEED = SPACING * S_SLOPE * (1 - DWELL)
+
+// Camera keyframes (p, z) for the hero and the dive; the first two depend on the aspect.
+const CAM_P = [0, PHASES.hero[1], PHASES.dive[0] + 0.7 * (PHASES.dive[1] - PHASES.dive[0]), PHASES.dive[1]]
+const CAM_Z = [CAMERA_START, CAMERA_HERO_END, CAMERA_FILL, CAMERA_DIVE_END]
+const camSlopes = [0, 0, 0, 0]
 
 // C1 ramp: 0 below 0, quadratic in [0, 1], then linear with slope 1.
 const ramp = (x: number) => (x <= 0 ? 0 : x < 1 ? 0.5 * x * x : x - 0.5)
@@ -157,29 +164,28 @@ export function evaluate(p: number, aspect: number, cardCount: number, st: Timel
   st.focusDistance = focusDistanceFor(aspect)
 
   // --- Camera ---------------------------------------------------------------------------------
-  const sLinear = S_START + S_SLOPE * (Math.min(p, PHASES.outro[1]) - PHASES.statement[0])
+  // Linear in p through the cards, then a C1 ease-out to rest at the start of the finale.
+  const [o0, o1] = PHASES.outro
+  const q = Math.min(p, o0) + (p > o0 ? Math.min(p - o0, o1 - o0) - Math.min(p - o0, o1 - o0) ** 2 / (2 * (o1 - o0)) : 0)
+  const sLinear = S_START + S_SLOPE * (q - PHASES.statement[0])
   st.s = dwell(sLinear)
   if (p < PHASES.dive[1]) {
     st.camera.x = 0
     st.camera.y = 0
-    const heroStart = heroDistance(aspect)
-    const heroEnd = heroStart - (CAMERA_START - CAMERA_HERO_END)
-    if (p < PHASES.hero[1]) {
-      st.camera.z = lerp(heroStart, heroEnd, easeInOut(st.hero))
-    } else {
-      // Rush in until the sphere fills the screen, then creep while the hole opens.
-      st.camera.z =
-        st.dive < 0.6
-          ? lerp(heroEnd, CAMERA_FILL, smoothstep(0, 0.6, st.dive))
-          : lerp(CAMERA_FILL, CAMERA_DIVE_END, smoothstep(0.6, 1, st.dive))
-    }
+    // One smooth, monotone curve from the hero to the end of the dive: drift towards the sphere,
+    // rush in until it fills the screen, slow while the hole opens, and leave at the speed the
+    // card path starts with. (Stitched easings stopped the camera at every seam.)
+    const start = heroDistance(aspect)
+    CAM_Z[0] = start
+    CAM_Z[1] = start - (CAMERA_START - CAMERA_HERO_END)
+    st.camera.z = monotoneCubic(CAM_P, CAM_Z, camSlopes, p, -PATH_START_SPEED)
   } else {
     pathAt(st.s, aspect, st.camera)
   }
 
   // --- Hero sphere and the dive ---------------------------------------------------------------
   st.heroSphereVisible = p < PHASES.dive[1] + 0.005
-  st.heroHole = 1.3 * Math.pow(smoothstep(0.3, 0.92, st.dive), 2)
+  st.heroHole = 1.3 * Math.pow(smoothstep(0.4, 0.95, st.dive), 2)
   st.heroAlpha = 1 - smoothstep(0.75, 1.0, st.dive)
   st.heroDarken = smoothstep(0.55, 1.0, st.dive)
 
@@ -239,6 +245,7 @@ export function selfTest() {
     console.error("timeline:", msg)
   }
   for (const aspect of [16 / 9, 1, 9 / 19.5]) {
+    let lastSpeed = 0
     for (let i = 0; i < N; i++) {
       const p0 = i / N
       const p1 = (i + 1) / N
@@ -247,6 +254,11 @@ export function selfTest() {
       const jump = Math.hypot(b.camera.x - a.camera.x, b.camera.y - a.camera.y, b.camera.z - a.camera.z)
       if (jump > 0.15) fail(`camera jumps by ${jump.toFixed(3)} at p=${p0.toFixed(4)} (aspect ${aspect.toFixed(2)})`)
       if (b.camera.z > a.camera.z + 1e-9) fail(`camera moves backwards at p=${p0.toFixed(4)}`)
+      // Smoothness: no stalls while travelling, no jumps in speed (dz/dp).
+      const speed = (a.camera.z - b.camera.z) * N
+      if (i > 0 && Math.abs(speed - lastSpeed) > 3) fail(`camera speed jumps ${lastSpeed.toFixed(1)} -> ${speed.toFixed(1)} at p=${p0.toFixed(4)}`)
+      if (p0 > 0.002 && p0 < PHASES.outro[1] - 0.01 && speed < 2) fail(`camera stalls (dz/dp=${speed.toFixed(2)}) at p=${p0.toFixed(4)}`)
+      lastSpeed = speed
       if (b.s < a.s - 1e-9) fail(`s decreases at p=${p0.toFixed(4)}`)
       for (const k of ["heroText", "statementText", "cardsUi", "contact", "focusWeight", "heroAlpha", "finaleAlpha", "vortex"] as const) {
         const v = a[k]

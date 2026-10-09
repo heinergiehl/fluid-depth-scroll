@@ -17,6 +17,8 @@ const fragment = /* glsl */ `
   uniform vec3 uDeep;
   uniform vec3 uViolet;
   uniform vec3 uBlue;
+  uniform vec3 uAccent;
+  uniform float uAccentMix;
   ${noiseGLSL}
 
   void main() {
@@ -38,6 +40,9 @@ const fragment = /* glsl */ `
     col += uViolet * violet * (0.06 + 0.15 * edge);
     col += uBlue * blue * (0.03 + 0.14 * edge) * smoothstep(0.2, 0.9, abs(p.x) / uAspect * 2.0);
 
+    // A project's cosmos takes on its accent colour, strongest in the clouds.
+    col = mix(col, col * 0.6 + uAccent * (0.05 + 0.22 * max(violet, blue) * edge + 0.04 * (1.0 - r)), uAccentMix);
+
     fragColor = vec4(col * uBrightness, 1.0);
   }
 `
@@ -52,6 +57,8 @@ export class Nebula {
     uDeep: { value: linear(PALETTE.deep) },
     uViolet: { value: linear(PALETTE.violet) },
     uBlue: { value: linear(PALETTE.blue) },
+    uAccent: { value: linear(PALETTE.cyan) },
+    uAccentMix: { value: 0 },
   }
   private readonly material = passMaterial(fragment, this.uniforms)
   private readonly pass: FullscreenPass
