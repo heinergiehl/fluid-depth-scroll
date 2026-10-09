@@ -440,9 +440,15 @@ em {
 }
 
 .next {
-  position: absolute;
-  right: var(--gutter);
-  bottom: var(--gutter);
+  margin-top: 26px;
+  padding-left: 0;
+  padding-right: 8px;
+  background: none;
+  color: var(--ink-soft);
+}
+
+.next:hover {
+  color: var(--ink);
 }
 
 /* The panel's place: the WebGL card lands exactly on this box. The image is real (alt text,
@@ -548,9 +554,20 @@ em {
   padding-right: 8px;
 }
 
+/* Taller than the screen (short windows, phones in landscape): align to the top and scroll.
+   Only for the side-by-side layout; the stacked one is top-aligned already. */
+@media (min-width: 901px), (min-aspect-ratio: 4/3) {
+  .view-project.tall .project,
+  .view-project.tall .project-media {
+    top: 128px;
+    transform: none;
+  }
+}
+
 /* ---------- small screens ---------- */
 
-@media (max-width: 900px) {
+/* Stacked project layout: narrow portrait screens only (landscape phones keep the columns). */
+@media (max-width: 900px) and (max-aspect-ratio: 4/3) {
   .project-media {
     left: var(--gutter);
     right: var(--gutter);
@@ -576,9 +593,6 @@ em {
     display: none;
   }
 
-  .next {
-    display: none;
-  }
 }
 
 @media (max-width: 760px) {

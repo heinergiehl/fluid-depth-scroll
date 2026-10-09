@@ -259,13 +259,35 @@ function start(renderer: THREE.WebGLRenderer) {
     } else input.scrollTo(target === "contact" ? 1 : progressForCard(0) - 0.012)
   }
 
+  // Project page geometry: the panel box, and whether the page needs to scroll. Measured with
+  // the view's transform off; the WebGL text measures after this (queued for the next frame).
+  let projectScroll = 0
+  let projectScrollTarget = 0
+  let projectScrollMax = 0
   function measurePanel() {
-    const media = overlay.projectElement?.querySelector<HTMLElement>(".project-media")
-    if (!media) return
+    const view = overlay.projectElement
+    const media = view?.querySelector<HTMLElement>(".project-media")
+    const article = view?.querySelector<HTMLElement>(".project")
+    if (!view || !media || !article) return
+    const saved = view.style.transform
+    view.style.transform = "none"
+    view.classList.remove("tall")
+    const fits = (el: HTMLElement) => {
+      const r = el.getBoundingClientRect()
+      return r.top >= 110 && r.bottom <= height - 24
+    }
+    if (!fits(article) || !fits(media)) view.classList.add("tall")
     const r = media.getBoundingClientRect()
     panelPx.x = r.left + r.width / 2
     panelPx.y = r.top + r.height / 2
     panelPx.w = r.width
+    const bottom = Math.max(article.getBoundingClientRect().bottom, r.bottom)
+    projectScrollMax = Math.max(0, bottom + 32 - height)
+    projectScrollTarget = clamp(projectScrollTarget, 0, projectScrollMax)
+    view.style.transform = saved
+  }
+  input.onLockedScroll = px => {
+    if (router.route.name === "project") projectScrollTarget = clamp(projectScrollTarget + px, 0, projectScrollMax)
   }
 
   router.onChange((route, from) => {
@@ -279,8 +301,9 @@ function start(renderer: THREE.WebGLRenderer) {
       } else {
         active = next
         overlay.showProject(route)
-        texts.rebuild()
+        projectScroll = projectScrollTarget = 0
         measurePanel()
+        texts.rebuild()
         tTarget = 1
       }
     } else {
@@ -311,8 +334,9 @@ function start(renderer: THREE.WebGLRenderer) {
       pendingSwap = -1
       const route = router.route
       if (route.name === "project") overlay.showProject(route)
-      texts.rebuild()
+      projectScroll = projectScrollTarget = 0
       measurePanel()
+      texts.rebuild()
       input.seek(progressForCard(active))
       tTarget = 1
     }
@@ -355,7 +379,7 @@ function start(renderer: THREE.WebGLRenderer) {
     } else {
       // The panel: where the HTML layout reserves the media box, tilted a little, floating.
       const k = (2 * PANEL_DISTANCE * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)) / height
-      pose.position.set((panelPx.x - width / 2) * k, (height / 2 - panelPx.y) * k + Math.sin(time * 0.6) * 0.03, -PANEL_DISTANCE)
+      pose.position.set((panelPx.x - width / 2) * k, (height / 2 - panelPx.y + projectScroll) * k + Math.sin(time * 0.6) * 0.03, -PANEL_DISTANCE)
       pose.position.applyQuaternion(camera.quaternion).add(camera.position)
       tmpE.set(-0.05 + Math.sin(time * 0.4) * 0.02 - pointerNdc.y * 0.06, 0.16 + Math.sin(time * 0.33) * 0.03 + pointerNdc.x * 0.08, 0)
       panelTilt.setFromEuler(tmpE)
@@ -486,8 +510,10 @@ function start(renderer: THREE.WebGLRenderer) {
     composite.uniforms.uZoom.value = input.reducedMotion ? 0 : trans.zoom
     particles.renderU.uOpacity.value = 1 + 2.5 * trans.pull
 
+    projectScroll = damp(projectScroll, projectScrollTarget, 9, dt)
     overlay.homeAlpha = home
     overlay.projectAlpha = trans.projectAlpha
+    overlay.projectScroll = projectScroll
     overlay.update(st)
     texts.update()
   }

@@ -27,6 +27,7 @@ export class Input {
   progress = 0
   velocity = 0 // progress per second, signed
   scrollLocked = false // wheel / touch / keys do not move the track (inside a project)
+  onLockedScroll: ((px: number) => void) | null = null // receives the scroll while locked
 
   // Pointer. ndc: -1..1 with y up; uv: 0..1 with y up.
   readonly ndc = { x: 0, y: 0 }
@@ -126,7 +127,10 @@ export class Input {
   }
 
   private addScroll(px: number) {
-    if (this.scrollLocked) return
+    if (this.scrollLocked) {
+      this.onLockedScroll?.(px)
+      return
+    }
     this.target = clamp(this.target + px, 0, this.track)
   }
 

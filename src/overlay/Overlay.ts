@@ -61,6 +61,7 @@ export class Overlay {
   private lastFocus = -1
   homeAlpha = 1 // set by the project transition
   projectAlpha = 0
+  projectScroll = 0 // px, when the project page is taller than the screen
 
   constructor(
     private readonly root: HTMLElement,
@@ -146,7 +147,7 @@ export class Overlay {
     set(L.cardsUi, st.cardsUi * h, 0, 0, 0, 0)
     set(L.contact, st.contact * h, (1 - st.contact) * 40, 0, 0, 0)
     set(L.home, h, 0, 0, 0, 0)
-    set(L.project, this.projectAlpha, 0, (1 - this.projectAlpha) * 24, 1 - this.projectAlpha, 0)
+    set(L.project, this.projectAlpha, 0, (1 - this.projectAlpha) * 24 - this.projectScroll, 1 - this.projectAlpha, 0)
 
     this.stylers.get("hero")!.apply(L.hero, 8)
     this.stylers.get("hint")!.apply(L.hint)

@@ -147,8 +147,8 @@ export function projectMarkup(p: Project) {
           <h2 class="label gl" data-gl="label">Stack</h2>
           <p class="project-stack gl" data-gl="project-stack">${p.stack.map(esc).join(" · ")}</p>
           <div class="project-links">${p.links.map((l, k) => external(l, k === 0 ? "pill pill-cyan" : "pill pill-outline")).join("")}</div>
+          <a class="pill next" href="/projects/${next.slug}" data-route>Next: ${esc(next.name)}<span class="pill-arrow" aria-hidden="true">›</span></a>
         </article>
-        <a class="pill pill-outline next" href="/projects/${next.slug}" data-route>Next: ${esc(next.name)}<span class="pill-arrow" aria-hidden="true">›</span></a>
       </div>`
 }
 
