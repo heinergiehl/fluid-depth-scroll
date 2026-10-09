@@ -4,3 +4,6 @@ dist
 docs/reference
 docs/verify
 .claude/
+
+.vercel
+.env*
