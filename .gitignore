@@ -1,0 +1,6 @@
+node_modules
+dist
+*.local
+docs/reference
+docs/verify
+.claude/
