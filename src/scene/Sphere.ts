@@ -61,8 +61,13 @@ const fragment = /* glsl */ `
 
     // Slow internal swirl: warps the gradient coordinates.
     vec3 sw = vObjNormal * 1.6 + vec3(uTime * 0.03, -uTime * 0.02, uTime * 0.025);
+  #ifdef LOW_QUALITY
+    float n1 = noise3(sw) * 0.6;
+    float n2 = noise3(sw + 7.3) * 0.6;
+  #else
     float n1 = fbm3(sw);
     float n2 = fbm3(sw + 7.3);
+  #endif
     vec3 Nw = normalize(N + 0.35 * vec3(n1, n2, 0.0));
 
     // Pearlescent gradient by view-space normal: blue body, lavender upper left, cyan to the
@@ -135,13 +140,14 @@ export class Sphere {
   private readonly projected = new THREE.Vector3()
   private readonly center = new THREE.Vector3()
 
-  constructor(dye: THREE.Texture) {
+  constructor(dye: THREE.Texture, lowQuality = false) {
     sharedGeometry ??= new THREE.SphereGeometry(1, 128, 64)
     this.uniforms.uDye.value = dye
     const material = new THREE.RawShaderMaterial({
       glslVersion: THREE.GLSL3,
       vertexShader: vertex,
       fragmentShader: fragment,
+      defines: lowQuality ? { LOW_QUALITY: "" } : {},
       uniforms: this.uniforms,
       transparent: true,
       depthWrite: true,

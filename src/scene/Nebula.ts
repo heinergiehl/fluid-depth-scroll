@@ -1,5 +1,5 @@
 import * as THREE from "three"
-import { FullscreenPass, passMaterial } from "../gl/targets"
+import { FullscreenPass, createTarget, passMaterial } from "../gl/targets"
 import { PALETTE, linear, noiseGLSL } from "../gl/glsl"
 
 // Full-screen backdrop, drawn first into the scene target: indigo gradient plus large, very soft
@@ -62,12 +62,33 @@ export class Nebula {
   }
   private readonly material = passMaterial(fragment, this.uniforms)
   private readonly pass: FullscreenPass
+  // The clouds are drawn at a fraction of the resolution and upscaled with linear filtering:
+  // there is no detail to lose, and it saves most of the cost of the noise.
+  private readonly low = createTarget(1, 1)
+  private readonly copyU = { uSource: { value: this.low.texture as THREE.Texture } }
+  private readonly copy = passMaterial(
+    /* glsl */ `
+    in vec2 vUv;
+    out vec4 fragColor;
+    uniform sampler2D uSource;
+    void main() { fragColor = texture(uSource, vUv); }
+  `,
+    this.copyU,
+  )
 
-  constructor(renderer: THREE.WebGLRenderer) {
+  constructor(
+    renderer: THREE.WebGLRenderer,
+    private readonly scale = 0.5,
+  ) {
     this.pass = new FullscreenPass(renderer)
   }
 
+  setSize(width: number, height: number) {
+    this.low.setSize(Math.max(1, Math.round(width * this.scale)), Math.max(1, Math.round(height * this.scale)))
+  }
+
   render(target: THREE.WebGLRenderTarget) {
-    this.pass.render(this.material, target)
+    this.pass.render(this.material, this.low)
+    this.pass.render(this.copy, target)
   }
 }

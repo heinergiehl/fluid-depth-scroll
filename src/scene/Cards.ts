@@ -118,7 +118,7 @@ const fragment = /* glsl */ `
     float band = fract((p.x * 0.55 + p.y * 0.35) * 0.5 - uTime * 0.35 + uSeed);
     col += uAccent * smoothstep(0.0, 0.08, band) * smoothstep(0.2, 0.08, band) * 0.1 * uHover * inside;
 
-    // Glow outside the card, widening into a halo on hover, plus a slow pulsing ring.
+    // Glow outside the card, widening into a soft halo on hover.
     float dOut = max(d, 0.0);
     // Rounded by construction: outside a rounded rectangle the distance iso-lines are rounded too.
     // The plane is a rectangle, so everything must have faded to 0 before its edge.
@@ -127,19 +127,27 @@ const fragment = /* glsl */ `
     float rest = exp(-dOut / 0.05) * 0.16;
     // Hover halo: bright close to the card, a long soft tail, gently breathing and uneven like
     // light in liquid.
-    float shimmer = 0.75 + 0.35 * (fbm2(p * 1.6 + vec2(uTime * 0.12, -uTime * 0.09)) * 0.5 + 0.5);
-    float breathe = 0.9 + 0.1 * sin(uTime * 1.4 + uSeed * 6.0);
-    float halo = (exp(-pow(dOut / 0.04, 1.2)) * 0.12 + exp(-pow(dOut / 0.16, 1.4)) * 0.13) * shimmer * breathe;
-    float glow = mix(rest, halo, uHover) * window * (1.0 - inside);
+    float glow = rest;
+    if (uHover > 0.001) {
+      float shimmer = 0.75 + 0.35 * (fbm2(p * 1.6 + vec2(uTime * 0.12, -uTime * 0.09)) * 0.5 + 0.5);
+      float breathe = 0.9 + 0.1 * sin(uTime * 1.4 + uSeed * 6.0);
+      float halo = (exp(-pow(dOut / 0.04, 1.2)) * 0.12 + exp(-pow(dOut / 0.16, 1.4)) * 0.13) * shimmer * breathe;
+      glow = mix(rest, halo, uHover);
+    }
+    glow *= window * (1.0 - inside);
     vec3 glowCol = mix(uGlow, uAccent * 1.2, uHover);
 
-    // Dissolve: noise threshold with a hot edge in the accent colour.
-    float n = fbm2(p * 3.2 + uSeed * 10.0) * 0.5 + 0.5;
-    n = mix(n, fbm2(p * 9.0 - uSeed * 7.0) * 0.5 + 0.5, 0.3);
-    float cut = uDissolve * 1.25 - 0.1;
-    float alive = smoothstep(cut - 0.02, cut + 0.02, n);
-    float edge = (1.0 - smoothstep(0.0, 0.07, abs(n - cut))) * step(0.001, uDissolve) * step(uDissolve, 0.999);
-    col += uAccent * edge * 2.2;
+    // Dissolve: noise threshold with a hot edge in the accent colour (only while dissolving).
+    float alive = 1.0;
+    float edge = 0.0;
+    if (uDissolve > 0.0) {
+      float n = fbm2(p * 3.2 + uSeed * 10.0) * 0.5 + 0.5;
+      n = mix(n, fbm2(p * 9.0 - uSeed * 7.0) * 0.5 + 0.5, 0.3);
+      float cut = uDissolve * 1.25 - 0.1;
+      alive = smoothstep(cut - 0.02, cut + 0.02, n);
+      edge = (1.0 - smoothstep(0.0, 0.07, abs(n - cut))) * step(uDissolve, 0.999);
+      col += uAccent * edge * 2.2;
+    }
 
     vec3 outCol = mix(glowCol, col, inside);
     float alpha = (inside * max(alive, edge) + glow * (1.0 - uDissolve)) * uOpacity;
@@ -262,7 +270,8 @@ export class Cards {
   }
 
   // Index of the card under the pointer (ndc), among cards that are clearly visible, or -1.
-  pick(camera: THREE.Camera, x: number, y: number, minOpacity = 0.5) {
+  // `slack` widens the hit area past the card edge (world units), for fingers.
+  pick(camera: THREE.Camera, x: number, y: number, minOpacity = 0.5, slack = 0) {
     this.ndc.set(x, y)
     this.raycaster.setFromCamera(this.ndc, camera)
     let best = -1
@@ -275,7 +284,7 @@ export class Cards {
       if (!hit?.uv) continue
       const u = (hit.uv.x - 0.5) * (CARD_W + 2 * MARGIN)
       const v = (hit.uv.y - 0.5) * (CARD_H + 2 * MARGIN)
-      if (Math.abs(u) > CARD_W / 2 || Math.abs(v) > CARD_H / 2) continue
+      if (Math.abs(u) > CARD_W / 2 + slack || Math.abs(v) > CARD_H / 2 + slack) continue
       if (hit.distance < bestDistance) {
         best = i
         bestDistance = hit.distance

@@ -26,12 +26,16 @@ class Styler {
     this.el.style.setProperty(prop, value)
   }
   // Fully transparent sections leave the accessibility tree and the tab order.
+  // CSS blur is only used while the HTML text is visible (no WebGL text): once WebGL draws the
+  // text, the filter would only blur transparent glyphs, and it is costly on phones.
+  static cssBlur = true
   apply(l: Look, maxBlurPx = 0) {
     this.set("opacity", l.opacity.toFixed(3))
     this.set("visibility", l.opacity < 0.01 ? "hidden" : "visible")
     this.set("transform", l.x || l.y ? `translate3d(${l.x.toFixed(1)}px, ${l.y.toFixed(1)}px, 0)` : "none")
-    const blur = l.blur * maxBlurPx
-    this.set("filter", blur < 0.05 && l.dim < 0.01 ? "none" : `blur(${blur.toFixed(1)}px) brightness(${(1 - 0.55 * l.dim).toFixed(2)})`)
+    const blur = Styler.cssBlur ? l.blur * maxBlurPx : 0
+    const dim = Styler.cssBlur ? l.dim : 0
+    this.set("filter", blur < 0.05 && dim < 0.01 ? "none" : `blur(${blur.toFixed(1)}px) brightness(${(1 - 0.55 * dim).toFixed(2)})`)
   }
 }
 
@@ -134,6 +138,7 @@ export class Overlay {
   }
 
   update(st: TimelineState) {
+    Styler.cssBlur = !document.body.classList.contains("gl-text")
     const L = this.looks
     const h = this.homeAlpha
 

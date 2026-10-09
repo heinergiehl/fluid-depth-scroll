@@ -29,9 +29,7 @@ import { TextScene } from "./text/TextScene"
 // cosmos; clicking a card plays the transition between them.
 // `?debug=dye` / `?debug=velocity` shows the fluid alone; `?p=0.5` starts at a scroll position.
 
-const MAX_DPR = 1.75
 const MIN_DPR = 1
-const SLOW_FRAME = 1 / 45 // average frame time that triggers a lower resolution
 const SPLAT_MAX = 2.5 // uv/s per axis
 const SPLAT_GAIN = 0.7 // fraction of the pointer speed handed to the liquid
 const SPLAT_RADIUS = 0.055
@@ -39,6 +37,9 @@ const PANEL_DISTANCE = 4 // the project panel floats this far in front of the ca
 const params = new URLSearchParams(location.search)
 const debug = params.get("debug")
 const mobile = window.matchMedia("(pointer: coarse)").matches || Math.min(window.innerWidth, window.innerHeight) < 600
+// Phones: fewer pixels (their GPUs are 15-40x slower than a desktop card) and a quicker step down.
+const MAX_DPR = mobile ? 1.5 : 1.75
+const SLOW_FRAME = mobile ? 1 / 55 : 1 / 45 // average frame time that triggers a lower resolution
 
 const canvas = document.getElementById("gl") as HTMLCanvasElement
 const overlayRoot = document.getElementById("overlay") as HTMLElement
@@ -57,6 +58,8 @@ try {
 }
 
 let paused = false // dev hook: headless checks step the simulation themselves
+// Dev only: GPU time per stage (set by the dev hooks; null in production).
+let gpu: { begin(name: string): void; end(): void; poll(): void } | null = null
 
 if (renderer) start(renderer)
 else {
@@ -79,12 +82,12 @@ function start(renderer: THREE.WebGLRenderer) {
   renderer.autoClear = false
 
   // Gentler swirls than the simulation's defaults: the liquid should feel calm, not stormy.
-  const fluid = new FluidSim(renderer, { curl: 16, ...(mobile ? { simResolution: 96, dyeResolution: 384 } : {}) })
+  const fluid = new FluidSim(renderer, { curl: 16, ...(mobile ? { simResolution: 96, dyeResolution: 384, pressureIterations: 12 } : {}) })
   const camera = new THREE.PerspectiveCamera(FOV, 1, 0.1, 120)
   const scene = new THREE.Scene()
 
-  const heroSphere = new Sphere(fluid.dye)
-  const finaleSphere = new Sphere(fluid.dye)
+  const heroSphere = new Sphere(fluid.dye, mobile)
+  const finaleSphere = new Sphere(fluid.dye, mobile)
   const bubbles = new Bubbles(mobile ? 10 : 18)
   const particles = new Particles(renderer, fluid.velocity, { size: mobile ? 64 : 128 })
   const cards = new Cards(
@@ -100,7 +103,7 @@ function start(renderer: THREE.WebGLRenderer) {
   const texts = new TextScene(hud, overlay)
   texts.init().catch(err => console.warn("WebGL text unavailable, keeping the HTML text", err))
 
-  const nebula = new Nebula(renderer)
+  const nebula = new Nebula(renderer, mobile ? 0.35 : 0.5)
   const composite = new Composite(renderer, fluid.velocity, fluid.dye)
   const fluidView = debug === "dye" || debug === "velocity" ? import("./dev/fluidView").then(m => new m.FluidView(renderer, fluid, debug)) : null
   let fluidViewReady: { render(): void } | null = null
@@ -127,6 +130,7 @@ function start(renderer: THREE.WebGLRenderer) {
     renderer.setSize(width, height, false)
     renderer.getDrawingBufferSize(size)
     hdr.setSize(size.x, size.y)
+    nebula.setSize(size.x, size.y)
     camera.aspect = width / height
     camera.updateProjectionMatrix()
     hud.resize(width, height)
@@ -312,8 +316,15 @@ function start(renderer: THREE.WebGLRenderer) {
     }
   })
 
-  canvas.addEventListener("click", () => {
-    if (hovered >= 0 && router.route.name === "home") router.go({ name: "project", project: projects[hovered] })
+  // Pick at the click itself: a tap has no hover before it (no pointermove), so the hover state
+  // cannot be trusted on touch screens. Fingers get a more generous hit area.
+  canvas.addEventListener("click", e => {
+    if (router.route.name !== "home" || tValue !== 0 || state.cardsAlpha < 0.5) return
+    const x = (e.clientX / width) * 2 - 1
+    const y = 1 - (e.clientY / height) * 2
+    const touch = (e as PointerEvent).pointerType === "touch" || mobile
+    const i = cards.pick(camera, x, y, 0.5, touch ? 0.12 : 0)
+    if (i >= 0) router.go({ name: "project", project: projects[i] })
   })
   window.addEventListener("keydown", e => {
     if (e.key === "Escape" && router.route.name === "project") router.go({ name: "home" })
@@ -488,9 +499,13 @@ function start(renderer: THREE.WebGLRenderer) {
     cards.update(time, dt, camera, camera.aspect, st.cardsAlpha * home, st.s, size, pointerNdc)
 
     stirFluid(dt)
+    gpu?.begin("fluid")
     fluid.update(dt)
+    gpu?.end()
     particles.pull = trans.pull * (input.reducedMotion ? 0.3 : 1)
+    gpu?.begin("particles-step")
     particles.update(dt, time, camera, camDelta, size.y)
+    gpu?.end()
 
     // The project's accent colour floods the backdrop and the particles.
     if (active >= 0) accentTarget.copy(linear(projects[active].accent))
@@ -525,9 +540,16 @@ function start(renderer: THREE.WebGLRenderer) {
     }
     renderer.setRenderTarget(hdr)
     renderer.clear()
+    gpu?.begin("nebula")
     nebula.render(hdr)
+    gpu?.end()
+    gpu?.begin("scene")
     renderer.render(scene, camera)
+    gpu?.end()
+    gpu?.begin("composite")
     composite.render(hdr.texture)
+    gpu?.end()
+    gpu?.poll()
   }
 
   resize()
@@ -538,8 +560,51 @@ function start(renderer: THREE.WebGLRenderer) {
   // Dev hooks for headless verification.
   if (import.meta.env.DEV) {
     selfTest()
-    import("./dev/probe").then(({ TextureProbe }) => {
+    Promise.all([import("./dev/probe"), import("./dev/gpuTimer")]).then(([{ TextureProbe }, { GpuTimer }]) => {
+      const timer = new GpuTimer(renderer.getContext() as WebGL2RenderingContext)
+      // Scene breakdown: render the scene once per category with only that category visible.
+      const categories: Record<string, THREE.Object3D[]> = {
+        spheres: [heroSphere.mesh, finaleSphere.mesh],
+        bubbles: [bubbles.mesh],
+        particles: [particles.points],
+        cards: [cards.group],
+        text: [hud],
+      }
       window.__demo = {
+        // Average GPU ms per stage over n frames (simulation stepped while paused).
+        profile: async (n = 60) => {
+          if (!timer.supported) return { error: "EXT_disjoint_timer_query_webgl2 not supported" }
+          gpu = timer
+          timer.enabled = true
+          timer.reset()
+          for (let i = 0; i < n; i++) {
+            time += 1 / 60
+            step(1 / 60)
+            render()
+            // Scene breakdown passes (same target, results only used for timing).
+            const all = Object.values(categories).flat()
+            const was = all.map(o => o.visible)
+            for (const [name, objs] of Object.entries(categories)) {
+              all.forEach(o => (o.visible = false))
+              objs.forEach(o => (o.visible = was[all.indexOf(o)] ?? true))
+              renderer.setRenderTarget(hdr)
+              timer.begin(`scene:${name}`)
+              renderer.render(scene, camera)
+              timer.end()
+            }
+            all.forEach((o, k) => (o.visible = was[k]))
+            await new Promise(r => requestAnimationFrame(r))
+            timer.poll()
+          }
+          for (let i = 0; i < 10; i++) {
+            await new Promise(r => requestAnimationFrame(r))
+            timer.poll()
+          }
+          timer.enabled = false
+          gpu = null
+          const size = renderer.getDrawingBufferSize(new THREE.Vector2())
+          return { buffer: [size.x, size.y], ms: timer.report() }
+        },
         fluid,
         renderer,
         particles,
